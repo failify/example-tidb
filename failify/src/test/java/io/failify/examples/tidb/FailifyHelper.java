@@ -1,0 +1,144 @@
+package io.failify.examples.tidb;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mashape.unirest.http.HttpResponse;
+import com.mashape.unirest.http.Unirest;
+import com.mashape.unirest.http.exceptions.UnirestException;
+import io.failify.FailifyRunner;
+import io.failify.dsl.entities.Deployment;
+import io.failify.dsl.entities.PathAttr;
+import io.failify.dsl.entities.PortType;
+import io.failify.exceptions.RuntimeEngineException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.List;
+import java.util.Map;
+import java.util.StringJoiner;
+import java.util.concurrent.TimeoutException;
+
+public class FailifyHelper {
+    public static final Logger logger = LoggerFactory.getLogger(FailifyHelper.class);
+
+    public static Deployment getDeployment(int numOfPds, int numOfKvs, int numOfDbs) {
+        String pdStr = getPdString(numOfPds);
+        String pdInitialClusterStr = getPdInitialClusterString(numOfPds);
+        Deployment.Builder builder = Deployment.builder("example-tidb")
+                // Service Definitions
+                .withService("tidb")
+                    .applicationPath("../tidb-2.1.8-bin", "/tidb")
+                    .startCommand("/tidb/tidb-server --store=tikv --path=\"" + pdStr + "\"")
+                    .dockerImageName("failify/tidb:1.0")
+                    .dockerFileAddress("docker/Dockerfile", false)
+                    .tcpPort(4000).and()
+                .withService("tikv")
+                    .applicationPath("../tikv-2.1.8-bin", "/tikv")
+                    .startCommand("/tikv/tikv-server --addr=\"0.0.0.0:20160\"  --advertise-addr=\"$(hostname):20160\" " +
+                            "--pd=\"" + pdStr + "\" --data-dir=/data")
+                    .dockerImageName("failify/tidb:1.0").disableClockDrift()
+                    .dockerFileAddress("docker/Dockerfile", false).and()
+                .withService("pd")
+                    .applicationPath("../pd-2.1.8-bin", "/pd")
+                    .startCommand("/pd/pd-server --name=\"$(hostname)\" --client-urls=\"http://0.0.0.0:2379\" --data-dir=/data " +
+                            "--advertise-client-urls=\"http://$(hostname):2379\" --peer-urls=\"http://0.0.0.0:2380\" " +
+                            "--advertise-peer-urls=\"http://$(hostname):2380\" --initial-cluster=\"" + pdInitialClusterStr + "\"")
+                    .dockerImageName("failify/tidb:1.0").tcpPort(2379)
+                    .dockerFileAddress("docker/Dockerfile", false).and();
+        // PD Node Definitions
+        for (int i=1; i<=numOfPds; i++) builder.withNode("pd" + i, "pd").and();
+        // TiKV Node Definitions
+        for (int i=1; i<=numOfKvs; i++) builder.withNode("tikv" + i, "tikv").offOnStartup().and();
+        // TiDB Node definitions
+        for (int i=1; i<=numOfDbs; i++) builder.withNode("tidb" + i, "tidb").offOnStartup().and();
+        return builder.build();
+    }
+
+    private static String getPdString(int numOfPds) {
+        StringJoiner joiner = new StringJoiner(",");
+        for (int i=1; i<=numOfPds; i++) {
+            joiner.add("pd" + i + ":2379");
+        }
+        return joiner.toString();
+    }
+
+    private static String getPdInitialClusterString(int numOfPds) {
+        StringJoiner joiner = new StringJoiner(",");
+        for (int i=1; i<=numOfPds; i++) {
+            joiner.add("pd" + i + "=http://pd" + i + ":2380");
+        }
+        return joiner.toString();
+    }
+
+    public static void startNodesInOrder(FailifyRunner runner, int numOfPds) throws RuntimeEngineException, TimeoutException {
+        logger.info("Waiting for PDs to get online ...");
+        int attemptCounter = 0;
+        while (true) {
+            HttpResponse<String> response = null;
+            try {
+                Unirest.setTimeouts(1000,5000);
+                response = Unirest.get("http://" + runner.runtime().ip("pd1") + ":" +
+                        runner.runtime().portMapping("pd1", 2379, PortType.TCP) + "/pd/api/v1/members").asString();
+            } catch (UnirestException e) {
+                logger.debug("Error while getting the members of the PD cluster");
+            }
+            if (response.getStatus() == 200) {
+                ObjectMapper objectMapper = new ObjectMapper();
+                try {
+                    if (((List)objectMapper.readValue(response.getBody(), Map.class).get("members")).size() == numOfPds) {
+                        break;
+                    }
+                } catch (IOException e) {
+                    logger.debug("error while parsing PD members json data {}", response.getBody());
+                }
+            }
+            if (++attemptCounter >= 10) {
+                throw new TimeoutException("Waiting for PD cluster is timeouted!");
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                logger.debug("The PD startup wait thread got interrupted");
+            }
+        }
+        logger.info("PDs are online!");
+
+        for (String nodeName: runner.runtime().nodeNames()) {
+            if (nodeName.startsWith("tikv")) {
+                runner.runtime().startNode(nodeName);
+
+            }
+        }
+
+        for (String nodeName: runner.runtime().nodeNames()) {
+            if (nodeName.startsWith("tidb")) {
+                runner.runtime().startNode(nodeName);
+
+            }
+        }
+
+        logger.info("Waiting for the rest of the cluster to get online ...");
+        try {
+            Thread.sleep(30000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static Connection getTiDBConnection(FailifyRunner runner) throws ClassNotFoundException, TimeoutException, SQLException {
+        StringJoiner hostStr = new StringJoiner(",");
+        for (String node: runner.runtime().nodeNames()) {
+            if (node.startsWith("tidb")) {
+                hostStr.add(runner.runtime().ip(node) + ":" + runner.runtime().portMapping(node, 4000, PortType.TCP));
+            }
+        }
+        Class.forName("com.mysql.jdbc.Driver");
+        String connStr = "jdbc:mysql://" + hostStr +
+                "/?user=root&useUnicode=yes&characterEncoding=UTF-8&autoReconnect=true&failOverReadOnly=false&maxReconnects=10";
+        return DriverManager.getConnection(connStr);
+    }
+}
