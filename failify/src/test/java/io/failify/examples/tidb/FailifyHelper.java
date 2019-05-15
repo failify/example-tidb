@@ -26,8 +26,8 @@ public class FailifyHelper {
     public static final Logger logger = LoggerFactory.getLogger(FailifyHelper.class);
 
     public static Deployment getDeployment(int numOfPds, int numOfKvs, int numOfDbs) {
-        String pdStr = getPdString(numOfPds);
-        String pdInitialClusterStr = getPdInitialClusterString(numOfPds);
+        String pdStr = getPdString(numOfPds, false);
+        String pdInitialClusterStr = getPdString(numOfPds, true);
         Deployment.Builder builder = Deployment.builder("example-tidb")
                 // Service Definitions
                 .withService("tidb")
@@ -58,18 +58,10 @@ public class FailifyHelper {
         return builder.build();
     }
 
-    private static String getPdString(int numOfPds) {
+    private static String getPdString(int numOfPds, boolean http) {
         StringJoiner joiner = new StringJoiner(",");
         for (int i=1; i<=numOfPds; i++) {
-            joiner.add("pd" + i + ":2379");
-        }
-        return joiner.toString();
-    }
-
-    private static String getPdInitialClusterString(int numOfPds) {
-        StringJoiner joiner = new StringJoiner(",");
-        for (int i=1; i<=numOfPds; i++) {
-            joiner.add("pd" + i + "=http://pd" + i + ":2380");
+            joiner.add("pd" + i + (http ? "=http://pd" + i + ":2380" : ":2379"));
         }
         return joiner.toString();
     }
