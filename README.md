@@ -1,3 +1,6 @@
+Important: This repo contains large files and requires 
+[git-lfs](https://git-lfs.github.com/) to be installed 
+
 This repo contains sample [Failify](https://failify.io) test cases for TiDB. To make things easier for illustration
 purposes, the bin folder from v2.1.8 of TiDB built on Debian Stretch is included in the repo so anyone who wants to
 try the test cases is not required to build TiDB from scratch.
