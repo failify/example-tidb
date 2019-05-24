@@ -28,34 +28,26 @@ public class FailifyHelper {
     public static Deployment getDeployment(int numOfPds, int numOfKvs, int numOfDbs) {
         String pdStr = getPdString(numOfPds, false);
         String pdInitialClusterStr = getPdString(numOfPds, true);
-        Deployment.Builder builder = Deployment.builder("example-tidb")
+        return Deployment.builder("example-tidb")
                 // Service Definitions
                 .withService("tidb")
-                    .applicationPath("../tidb-2.1.8-bin", "/tidb")
-                    .startCommand("/tidb/tidb-server --store=tikv --path=\"" + pdStr + "\"")
-                    .dockerImageName("failify/tidb:1.0")
-                    .dockerFileAddress("docker/Dockerfile", false)
-                    .tcpPort(4000).and()
+                    .appPath("../tidb-2.1.8-bin", "/tidb")
+                    .dockerImgName("failify/tidb:1.0").dockerFileAddr("docker/Dockerfile", false)
+                    .startCmd("/tidb/tidb-server --store=tikv --path=\"" + pdStr + "\"").tcpPort(4000)
+                .and().nodeInstances(numOfDbs, "tidb", "tidb", true)
                 .withService("tikv")
-                    .applicationPath("../tikv-2.1.8-bin", "/tikv")
-                    .startCommand("/tikv/tikv-server --addr=\"0.0.0.0:20160\"  --advertise-addr=\"$(hostname):20160\" " +
+                    .appPath("../tikv-2.1.8-bin", "/tikv").disableClockDrift()
+                    .startCmd("/tikv/tikv-server --addr=\"0.0.0.0:20160\"  --advertise-addr=\"$(hostname):20160\" " +
                             "--pd=\"" + pdStr + "\" --data-dir=/data")
-                    .dockerImageName("failify/tidb:1.0").disableClockDrift()
-                    .dockerFileAddress("docker/Dockerfile", false).and()
+                    .dockerImgName("failify/tidb:1.0").dockerFileAddr("docker/Dockerfile", false)
+                .and().nodeInstances(numOfKvs, "tikv", "tikv", true)
                 .withService("pd")
-                    .applicationPath("../pd-2.1.8-bin", "/pd")
-                    .startCommand("/pd/pd-server --name=\"$(hostname)\" --client-urls=\"http://0.0.0.0:2379\" --data-dir=/data " +
+                    .appPath("../pd-2.1.8-bin", "/pd")
+                    .startCmd("/pd/pd-server --name=\"$(hostname)\" --client-urls=\"http://0.0.0.0:2379\" --data-dir=/data " +
                             "--advertise-client-urls=\"http://$(hostname):2379\" --peer-urls=\"http://0.0.0.0:2380\" " +
                             "--advertise-peer-urls=\"http://$(hostname):2380\" --initial-cluster=\"" + pdInitialClusterStr + "\"")
-                    .dockerImageName("failify/tidb:1.0").tcpPort(2379)
-                    .dockerFileAddress("docker/Dockerfile", false).and();
-        // PD Node Definitions
-        for (int i=1; i<=numOfPds; i++) builder.withNode("pd" + i, "pd").and();
-        // TiKV Node Definitions
-        for (int i=1; i<=numOfKvs; i++) builder.withNode("tikv" + i, "tikv").offOnStartup().and();
-        // TiDB Node definitions
-        for (int i=1; i<=numOfDbs; i++) builder.withNode("tidb" + i, "tidb").offOnStartup().and();
-        return builder.build();
+                    .dockerImgName("failify/tidb:1.0").dockerFileAddr("docker/Dockerfile", false).tcpPort(2379)
+                .and().nodeInstances(numOfPds, "pd", "pd", false).build();
     }
 
     private static String getPdString(int numOfPds, boolean http) {
