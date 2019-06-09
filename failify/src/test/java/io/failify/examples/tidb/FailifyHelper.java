@@ -32,21 +32,21 @@ public class FailifyHelper {
                 // Service Definitions
                 .withService("tidb")
                     .appPath("../tidb-2.1.8-bin", "/tidb")
-                    .dockerImgName("failify/tidb:1.0").dockerFileAddr("docker/Dockerfile", false)
+                    .dockerImg("failify/tidb:1.0").dockerFile("docker/Dockerfile", false)
                     .startCmd("/tidb/tidb-server --store=tikv --path=\"" + pdStr + "\"").tcpPort(4000)
                 .and().nodeInstances(numOfDbs, "tidb", "tidb", true)
                 .withService("tikv")
                     .appPath("../tikv-2.1.8-bin", "/tikv").disableClockDrift()
                     .startCmd("/tikv/tikv-server --addr=\"0.0.0.0:20160\"  --advertise-addr=\"$(hostname):20160\" " +
                             "--pd=\"" + pdStr + "\" --data-dir=/data")
-                    .dockerImgName("failify/tidb:1.0").dockerFileAddr("docker/Dockerfile", false)
+                    .dockerImg("failify/tidb:1.0").dockerFile("docker/Dockerfile", false)
                 .and().nodeInstances(numOfKvs, "tikv", "tikv", true)
                 .withService("pd")
                     .appPath("../pd-2.1.8-bin", "/pd")
                     .startCmd("/pd/pd-server --name=\"$(hostname)\" --client-urls=\"http://0.0.0.0:2379\" --data-dir=/data " +
                             "--advertise-client-urls=\"http://$(hostname):2379\" --peer-urls=\"http://0.0.0.0:2380\" " +
                             "--advertise-peer-urls=\"http://$(hostname):2380\" --initial-cluster=\"" + pdInitialClusterStr + "\"")
-                    .dockerImgName("failify/tidb:1.0").dockerFileAddr("docker/Dockerfile", false).tcpPort(2379)
+                    .dockerImg("failify/tidb:1.0").dockerFile("docker/Dockerfile", false).tcpPort(2379)
                 .and().nodeInstances(numOfPds, "pd", "pd", false).build();
     }
 
